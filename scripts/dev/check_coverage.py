@@ -46,6 +46,9 @@ PERFECT_FILES = [
     'qutebrowser/browser/network/filescheme.py',
     'qutebrowser/browser/network/networkreply.py',
     'qutebrowser/browser/signalfilter.py',
+    'qutebrowser/browser/pageloader/htmldir.py',
+    'qutebrowser/browser/pageloader/mhtml.py',
+    'qutebrowser/browser/pageloader/writer.py',
 
     'qutebrowser/keyinput/basekeyparser.py',
 
