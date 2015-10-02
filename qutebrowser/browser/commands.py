@@ -37,7 +37,8 @@ import pygments.formatters
 
 from qutebrowser.commands import userscripts, cmdexc, cmdutils, runners
 from qutebrowser.config import config, configexc
-from qutebrowser.browser import webelem, inspector, urlmarks, downloads, mhtml
+from qutebrowser.browser import webelem, inspector, urlmarks, downloads
+from qutebrowser.browser.pageloader import loader as page_loader
 from qutebrowser.keyinput import modeman
 from qutebrowser.utils import (message, usertypes, log, qtutils, urlutils,
                                objreg, utils)
@@ -1156,25 +1157,30 @@ class CommandDispatcher:
             download_manager.get(self._current_url(), page=page)
 
     @cmdutils.register(instance='command-dispatcher', scope='window')
-    def download_whole(self, dest=None):
+    def download_whole(
+            self, dest=None, *,
+            format: {'type': page_loader.Format}=page_loader.Format.mhtml):
         """Download the current page as a MHTML file, including all assets.
 
         Args:
             dest: The file path to write the download to.
+            format: The output format, either 'mhtml' or 'htmldir'.
         """
         if dest is None:
-            suggested_fn = self._current_title() + ".mht"
+            suggested_fn = self._current_title() + format.value.suggested_ext
             q = usertypes.Question()
             q.text = "Save page to: "
             q.mode = usertypes.PromptMode.text
             q.completed.connect(q.deleteLater)
             q.default = downloads.path_suggestion(suggested_fn)
-            q.answered.connect(mhtml.start_download_checked)
+            q.answered.connect(
+                functools.partial(page_loader.start_download_checked,
+                                  format=format))
             message_bridge = objreg.get("message-bridge", scope="window",
                                         window=self._win_id)
             message_bridge.ask(q, blocking=False)
         else:
-            mhtml.start_download_checked(dest)
+            page_loader.start_download_checked(dest, format=format)
 
     @cmdutils.register(instance='command-dispatcher', scope='window',
                        deprecated="Use :download instead.")

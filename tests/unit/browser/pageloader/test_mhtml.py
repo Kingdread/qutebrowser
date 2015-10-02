@@ -5,7 +5,7 @@ import re
 
 import pytest
 
-from qutebrowser.browser import mhtml
+from qutebrowser.browser.pageloader import mhtml
 
 @pytest.fixture(autouse=True)
 def patch_uuid(monkeypatch):
@@ -87,8 +87,7 @@ def test_file_encoded_as_base64(checker):
                                content_location='http://example.com')
     writer.add_file(location='http://a.example.com/image.png',
                     content='\U0001F601 image data'.encode('utf-8'),
-                    content_type='image/png',
-                    transfer_encoding=mhtml.E_BASE64)
+                    content_type='image/png')
     writer.write_to(checker.fp)
     checker.expect("""
         Content-Type: multipart/related; boundary="---=_qute-UUID"
@@ -113,15 +112,13 @@ def test_file_encoded_as_base64(checker):
         """)
 
 
-@pytest.mark.parametrize('transfer_encoding', [mhtml.E_BASE64, mhtml.E_QUOPRI],
-                         ids=['base64', 'quoted-printable'])
-def test_payload_lines_wrap(checker, transfer_encoding):
+@pytest.mark.parametrize('content_type', ['text/plain', 'image/png'])
+def test_payload_lines_wrap(checker, content_type):
     payload = b'1234567890' * 10
     writer = mhtml.MHTMLWriter(root_content=b'', content_type='text/plain',
                                content_location='http://example.com')
     writer.add_file(location='http://example.com/payload', content=payload,
-                    content_type='text/plain',
-                    transfer_encoding=transfer_encoding)
+                    content_type=content_type)
     writer.write_to(checker.fp)
     for line in checker.value.split(b'\r\n'):
         assert len(line) < 77
@@ -134,8 +131,7 @@ def test_files_appear_sorted(checker):
     for subdomain in 'ahgbizt':
         writer.add_file(location='http://{}.example.com/'.format(subdomain),
                         content='file {}'.format(subdomain).encode('utf-8'),
-                        content_type='text/plain',
-                        transfer_encoding=mhtml.E_QUOPRI)
+                        content_type='text/plain')
     writer.write_to(checker.fp)
     checker.expect("""
         Content-Type: multipart/related; boundary="---=_qute-UUID"
@@ -221,9 +217,10 @@ def test_empty_content_type(checker):
         -----=_qute-UUID
         MIME-Version: 1.0
         Content-Location: http://example.com/file
-        Content-Transfer-Encoding: quoted-printable
+        Content-Transfer-Encoding: base64
 
-        file=20content
+        ZmlsZSBjb250ZW50
+
         -----=_qute-UUID--
         """)
 
@@ -248,51 +245,3 @@ def test_removing_file_from_mhtml(checker):
         root
         -----=_qute-UUID--
         """)
-
-
-@pytest.mark.parametrize('has_cssutils', [True, False])
-@pytest.mark.parametrize('inline, style, expected_urls', [
-    (False, "@import 'default.css'", ['default.css']),
-    (False, '@import "default.css"', ['default.css']),
-    (False, "@import \t 'tabbed.css'", ['tabbed.css']),
-    (False, "@import url('default.css')", ['default.css']),
-    (False, """body {
-    background: url("/bg-img.png")
-    }""", ['/bg-img.png']),
-    (True, 'background: url(folder/file.png) no-repeat', ['folder/file.png']),
-    (True, 'content: url()', []),
-])
-def test_css_url_scanner(monkeypatch, has_cssutils, inline, style,
-                         expected_urls):
-    if has_cssutils:
-        assert mhtml.cssutils is not None
-    else:
-        monkeypatch.setattr('qutebrowser.browser.mhtml.cssutils', None)
-    expected_urls.sort()
-    urls = mhtml._get_css_imports(style, inline=inline)
-    urls.sort()
-    assert urls == expected_urls
-
-
-class TestNoCloseBytesIO:
-    # WORKAROUND for https://bitbucket.org/logilab/pylint/issues/540/
-    # pylint: disable=no-member
-
-    def test_fake_close(self):
-        fp = mhtml._NoCloseBytesIO()
-        fp.write(b'Value')
-        fp.close()
-        assert fp.getvalue() == b'Value'
-        fp.write(b'Eulav')
-        assert fp.getvalue() == b'ValueEulav'
-
-    def test_actual_close(self):
-        fp = mhtml._NoCloseBytesIO()
-        fp.write(b'Value')
-        fp.actual_close()
-        with pytest.raises(ValueError) as excinfo:
-            fp.getvalue()
-        assert str(excinfo.value) == 'I/O operation on closed file.'
-        with pytest.raises(ValueError) as excinfo:
-            fp.write(b'Closed')
-        assert str(excinfo.value) == 'I/O operation on closed file.'

@@ -17,32 +17,25 @@
 # You should have received a copy of the GNU General Public License
 # along with qutebrowser.  If not, see <http://www.gnu.org/licenses/>.
 
-"""Utils for writing a MHTML file."""
+"""Classes for searching webpages for referenced assets."""
 
 import functools
 import io
 import os
 import re
-import collections
-import uuid
-import email.policy
-import email.generator
-import email.encoders
-import email.mime.multipart
+import enum
 
 from PyQt5.QtCore import QUrl
+from PyQt5.QtWebKit import QWebElement
 
 from qutebrowser.browser import webelem
+from qutebrowser.browser.pageloader import mhtml, htmldir
 from qutebrowser.utils import log, objreg, message, usertypes
 
 try:
     import cssutils
 except ImportError:
     cssutils = None
-
-_File = collections.namedtuple('_File',
-                               ['content', 'content_type', 'content_location',
-                                'transfer_encoding'])
 
 
 _CSS_URL_PATTERNS = [re.compile(x) for x in [
@@ -54,53 +47,64 @@ _CSS_URL_PATTERNS = [re.compile(x) for x in [
 ]]
 
 
-def _get_css_imports_regex(data):
-    """Return all assets that are referenced in the given CSS document.
-
-    The returned URLs are relative to the stylesheet's URL.
-
-    Args:
-        data: The content of the stylesheet to scan as string.
-    """
+def _get_css_imports_regex(data, callback=None):
     urls = []
+
+    def cb_wrapper(match):
+        url = match.group('url')
+        urls.append(url)
+        if callback is not None:
+            new_url = callback(QUrl(url)).toString()
+            return 'url(' + new_url + ')'
+        return match.group(0)
+
     for pattern in _CSS_URL_PATTERNS:
-        for match in pattern.finditer(data):
-            url = match.group("url")
-            if url:
-                urls.append(url)
+        data = pattern.sub(cb_wrapper, data)
+    return (data, urls)
+
+
+def _handle_css_declaration(declaration, callback):
+    """Return URLs in the declaration and rewrite them if callback is given."""
+    urls = []
+    # prop = background, color, margin, ...
+    for prop in declaration:
+        # value = red, 10px, url(foobar), ...
+        for value in prop.propertyValue:
+            if isinstance(value, cssutils.css.URIValue):
+                if value.uri:
+                    urls.append(value.uri)
+                    if callback is not None:
+                        new_url = callback(QUrl(value.uri)).toString()
+                        value.uri = new_url
     return urls
 
 
-def _get_css_imports_cssutils(data, inline=False):
-    """Return all assets that are referenced in the given CSS document.
-
-    The returned URLs are relative to the stylesheet's URL.
-
-    Args:
-        data: The content of the stylesheet to scan as string.
-        inline: True if the argument is a inline HTML style attribute.
-    """
+def _get_css_imports_cssutils(data, inline=False, callback=None):
     # We don't care about invalid CSS data, this will only litter the log
     # output with CSS errors
     parser = cssutils.CSSParser(loglevel=100,
                                 fetcher=lambda url: (None, ""), validate=False)
     if not inline:
-        sheet = parser.parseString(data)
-        return list(cssutils.getUrls(sheet))
-    else:
         urls = []
+        sheet = parser.parseString(data)
+        for rule in sheet.cssRules:
+            if isinstance(rule, cssutils.css.CSSImportRule):
+                url = rule.href
+                urls.append(url)
+                if callback is not None:
+                    new_url = callback(QUrl(url)).toString()
+                    rule.href = new_url
+            elif isinstance(rule, cssutils.css.CSSStyleRule):
+                new_urls = _handle_css_declaration(rule.style, callback)
+                urls.extend(new_urls)
+        return (sheet.cssText.decode(sheet.encoding), urls)
+    else:
         declaration = parser.parseStyle(data)
-        # prop = background, color, margin, ...
-        for prop in declaration:
-            # value = red, 10px, url(foobar), ...
-            for value in prop.propertyValue:
-                if isinstance(value, cssutils.css.URIValue):
-                    if value.uri:
-                        urls.append(value.uri)
-        return urls
+        urls = _handle_css_declaration(declaration, callback)
+        return (declaration.cssText, urls)
 
 
-def _get_css_imports(data, inline=False):
+def _get_css_imports(data, inline=False, callback=None):
     """Return all assets that are referenced in the given CSS document.
 
     The returned URLs are relative to the stylesheet's URL.
@@ -108,101 +112,12 @@ def _get_css_imports(data, inline=False):
     Args:
         data: The content of the stylesheet to scan as string.
         inline: True if the argument is a inline HTML style attribute.
+        callback: The URL rewrite callback.
     """
     if cssutils is None:
-        return _get_css_imports_regex(data)
+        return _get_css_imports_regex(data, callback)
     else:
-        return _get_css_imports_cssutils(data, inline)
-
-
-MHTMLPolicy = email.policy.default.clone(linesep='\r\n', max_line_length=0)
-
-
-E_BASE64 = email.encoders.encode_base64
-"""Encode the file using base64 encoding"""
-
-E_QUOPRI = email.encoders.encode_quopri
-"""Encode the file using MIME quoted-printable encoding."""
-
-
-class MHTMLWriter():
-
-    """A class for outputting multiple files to a MHTML document.
-
-    Attributes:
-        root_content: The root content as bytes.
-        content_location: The url of the page as str.
-        content_type: The MIME-type of the root content as str.
-        _files: Mapping of location->_File struct.
-    """
-
-    def __init__(self, root_content, content_location, content_type):
-        self.root_content = root_content
-        self.content_location = content_location
-        self.content_type = content_type
-
-        self._files = {}
-
-    def add_file(self, location, content, content_type=None,
-                 transfer_encoding=E_QUOPRI):
-        """Add a file to the given MHTML collection.
-
-        Args:
-            location: The original location (URL) of the file.
-            content: The binary content of the file.
-            content_type: The MIME-type of the content (if available)
-            transfer_encoding: The transfer encoding to use for this file.
-        """
-        self._files[location] = _File(
-            content=content, content_type=content_type,
-            content_location=location, transfer_encoding=transfer_encoding,
-        )
-
-    def remove_file(self, location):
-        """Remove a file.
-
-        Args:
-            location: The URL that identifies the file.
-        """
-        del self._files[location]
-
-    def write_to(self, fp):
-        """Output the MHTML file to the given file-like object.
-
-        Args:
-            fp: The file-object, openend in "wb" mode.
-        """
-        msg = email.mime.multipart.MIMEMultipart(
-            'related', '---=_qute-{}'.format(uuid.uuid4()))
-
-        root = self._create_root_file()
-        msg.attach(root)
-
-        for _, file_data in sorted(self._files.items()):
-            msg.attach(self._create_file(file_data))
-
-        gen = email.generator.BytesGenerator(fp, policy=MHTMLPolicy)
-        gen.flatten(msg)
-
-    def _create_root_file(self):
-        """Return the root document as MIMEMultipart."""
-        root_file = _File(
-            content=self.root_content, content_type=self.content_type,
-            content_location=self.content_location, transfer_encoding=E_QUOPRI,
-        )
-        return self._create_file(root_file)
-
-    def _create_file(self, f):
-        """Return the single given file as MIMEMultipart."""
-        msg = email.mime.multipart.MIMEMultipart()
-        msg['Content-Location'] = f.content_location
-        # Get rid of the default type multipart/mixed
-        del msg['Content-Type']
-        if f.content_type:
-            msg.set_type(f.content_type)
-        msg.set_payload(f.content)
-        f.transfer_encoding(msg)
-        return msg
+        return _get_css_imports_cssutils(data, inline, callback)
 
 
 class _Downloader():
@@ -212,16 +127,18 @@ class _Downloader():
     Attributes:
         web_view: The QWebView which contains the website that will be saved.
         dest: Destination filename.
-        writer: The MHTMLWriter object which is used to save the page.
+        writer_factory: The class to use for creating a writer object.
+        writer: The writer object which is used to save the page.
         loaded_urls: A set of QUrls of finished asset downloads.
         pending_downloads: A set of unfinished (url, DownloadItem) tuples.
         _finished: A flag indicating if the file has already been written.
         _used: A flag indicating if the downloader has already been used.
     """
 
-    def __init__(self, web_view, dest):
+    def __init__(self, web_view, dest, writer_factory):
         self.web_view = web_view
         self.dest = dest
+        self.writer_factory = writer_factory
         self.writer = None
         self.loaded_urls = {web_view.url()}
         self.pending_downloads = set()
@@ -239,46 +156,64 @@ class _Downloader():
         self._used = True
         web_url = self.web_view.url()
         web_frame = self.web_view.page().mainFrame()
+        # We clone the document because we might rewrite URLs
+        document = QWebElement(web_frame.documentElement())
 
-        self.writer = MHTMLWriter(
-            web_frame.toHtml().encode('utf-8'),
+        self.writer = self.writer_factory(
+            # We need the writer, but we don't know the content yet, as URLs
+            # still need to be rewritten.
+            b'',
             content_location=web_url.toString(),
             # I've found no way of getting the content type of a QWebView, but
             # since we're using .toHtml, it's probably safe to say that the
             # content-type is HTML
             content_type='text/html; charset="UTF-8"',
+            dest=self.dest,
         )
         # Currently only downloading <link> (stylesheets), <script>
         # (javascript) and <img> (image) elements.
-        elements = web_frame.findAllElements('link, script, img')
+        elements = document.findAll('link, script, img')
 
         for element in elements:
             element = webelem.WebElementWrapper(element)
             if 'src' in element:
                 element_url = element['src']
+                attrib = 'src'
             elif 'href' in element:
                 element_url = element['href']
+                attrib = 'href'
             else:
                 # Might be a local <script> tag or something else
                 continue
             absolute_url = web_url.resolved(QUrl(element_url))
+            new_url = self.writer.rewrite_url(absolute_url)
+            element[attrib] = new_url.toString()
             self.fetch_url(absolute_url)
 
-        styles = web_frame.findAllElements('style')
+        styles = document.findAll('style')
         for style in styles:
             style = webelem.WebElementWrapper(style)
             if 'type' in style and style['type'] != 'text/css':
                 continue
-            for element_url in _get_css_imports(str(style)):
+            new_style, urls = _get_css_imports(
+                str(style), callback=functools.partial(self.writer.rewrite_url,
+                                                       base=web_url))
+            style.setInnerXml(new_style)
+            for element_url in urls:
                 self.fetch_url(web_url.resolved(QUrl(element_url)))
 
         # Search for references in inline styles
-        for element in web_frame.findAllElements('[style]'):
+        for element in document.findAll('[style]'):
             element = webelem.WebElementWrapper(element)
             style = element['style']
-            for element_url in _get_css_imports(style, inline=True):
+            new_style, urls = _get_css_imports(
+                style, inline=True, callback=functools.partial(
+                    self.writer.rewrite_url, base=web_url))
+            element['style'] = new_style
+            for element_url in urls:
                 self.fetch_url(web_url.resolved(QUrl(element_url)))
 
+        self.writer.root_content = document.toOuterXml().encode('utf-8')
         # Shortcut if no assets need to be downloaded, otherwise the file would
         # never be saved. Also might happen if the downloads are fast enough to
         # complete before connecting their finished signal.
@@ -346,14 +281,17 @@ class _Downloader():
             except UnicodeDecodeError:
                 log.downloads.warning("Invalid UTF-8 data in %s", url)
                 css_string = item.fileobj.getvalue().decode('utf-8', 'ignore')
-            import_urls = _get_css_imports(css_string)
+            new_css, import_urls = _get_css_imports(
+                css_string, callback=functools.partial(self.writer.rewrite_url,
+                                                       base=url))
+            item.fileobj.seek(0)
+            item.fileobj.write(new_css.encode('utf-8'))
+            item.fileobj.truncate()
             for import_url in import_urls:
                 absolute_url = url.resolved(QUrl(import_url))
                 self.fetch_url(absolute_url)
 
-        encode = E_QUOPRI if mime.startswith('text/') else E_BASE64
-        self.writer.add_file(url.toString(), item.fileobj.getvalue(), mime,
-                             encode)
+        self.writer.add_file(url.toString(), item.fileobj.getvalue(), mime)
         item.fileobj.actual_close()
         if self.pending_downloads:
             return
@@ -386,8 +324,7 @@ class _Downloader():
             return
         self._finished = True
         log.downloads.debug("All assets downloaded, ready to finish off!")
-        with open(self.dest, 'wb') as file_output:
-            self.writer.write_to(file_output)
+        self.writer.write()
         message.info('current', "Page saved as {}".format(self.dest))
 
     def collect_zombies(self):
@@ -420,34 +357,41 @@ class _NoCloseBytesIO(io.BytesIO):  # pylint: disable=no-init
         super().close()
 
 
-def start_download(dest):
+class Format(enum.Enum):
+    mhtml = mhtml.MHTMLWriter
+    htmldir = htmldir.HTMLDirWriter
+
+
+def start_download(dest, format):
     """Start downloading the current page and all assets to a MHTML file.
 
     This will overwrite dest if it already exists.
 
     Args:
         dest: The filename where the resulting file should be saved.
+        format: The Format to use for the output.
     """
     dest = os.path.expanduser(dest)
     web_view = objreg.get('webview', scope='tab', tab='current')
-    loader = _Downloader(web_view, dest)
+    loader = _Downloader(web_view, dest, format.value)
     loader.run()
 
 
-def start_download_checked(dest):
+def start_download_checked(dest, format):
     """First check if dest is already a file, then start the download.
 
     Args:
         dest: The filename where the resulting file should be saved.
+        format: The Format to use for the output.
     """
     if not os.path.isfile(dest):
-        start_download(dest)
+        start_download(dest, format)
         return
 
     q = usertypes.Question()
     q.mode = usertypes.PromptMode.yesno
     q.text = "{} exists. Overwrite?".format(dest)
     q.completed.connect(q.deleteLater)
-    q.answered_yes.connect(functools.partial(start_download, dest))
+    q.answered_yes.connect(functools.partial(start_download, dest, format))
     message_bridge = objreg.get('message-bridge', scope='window', window='current')
     message_bridge.ask(q, blocking=False)
