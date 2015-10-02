@@ -25,6 +25,8 @@ import re
 
 from PyQt5.QtCore import QUrl
 
+from qutebrowser.browser.pageloader import writer
+
 
 def _inc_filename(filename):
     """Take a filename and increases its number."""
@@ -53,25 +55,21 @@ def _get_asset_folder_path(dest):
     return os.path.join(base_folder, filename)
 
 
-class HTMLDirWriter():
+class HTMLDirWriter(writer.PageWriter):
 
     """A class for writing multiple files to a HTML file and an assets folder.
 
     Attributes:
-        root_content: The root content as bytes.
-        content_location: The url of the page as str.
-        content_type: The MIME-type of the root content as str.
+        (see writer.PageWriter)
         folder_path: The path of the assets folder.
-        folder_name: The name of the assets folder.
+        folder_name (readonly): The name of the assets folder.
         file_mapping: A original url->new filename mapping.
     """
 
     suggested_ext = '.html'
 
     def __init__(self, root_content, content_location, content_type, dest):
-        self.root_content = root_content
-        self.content_location = content_location
-        self.dest = dest
+        super().__init__(root_content, content_location, content_type, dest)
         self.folder_path = _get_asset_folder_path(dest)
         self.file_mapping = {}
 
@@ -81,13 +79,9 @@ class HTMLDirWriter():
         return os.path.basename(folder_path)
 
     def rewrite_url(self, url, base=None):
-        """Rewrite a URL to point at the (future) resource location.
+        """Return the filename in the assets folder for a given URL.
 
-        Args:
-            url: The url to rewrite as QUrl.
-            base: The URL of the file that references url (needed for CSS).
-
-        Returns the modified URL.
+        Overwritten PageWriter.rewrite_url
         """
         if url.scheme() == 'data':
             return url
@@ -109,13 +103,9 @@ class HTMLDirWriter():
             return QUrl(new_filename)
 
     def add_file(self, location, content, content_type=None):
-        """Add a file to the given MHTML collection.
+        """Add a file to the asset folder.
 
-        Args:
-            location: The original location (URL) of the file.
-            content: The binary content of the file.
-            content_type: The MIME-type of the content (if available)
-            transfer_encoding: The transfer encoding to use for this file.
+        Overwritten PageWriter.add_file.
         """
         filename = self.file_mapping[QUrl(location)]
         filepath = os.path.join(self.folder_path, filename)
@@ -126,12 +116,16 @@ class HTMLDirWriter():
     def remove_file(self, location):
         """Remove a file.
 
-        Args:
-            location: The URL that identifies the file.
+        Overwritten PageWriter.remove_file.
         """
-        raise NotImplementedError
+        filename = self.file_mapping[QUrl(location)]
+        filepath = os.path.join(self.folder_path, filename)
+        os.unlink(filepath)
 
     def write(self):
-        """Output the HTML file."""
+        """Output the HTML file.
+
+        Overwritten PageWriter.write.
+        """
         with open(self.dest, 'wb') as fp:
             fp.write(self.root_content)

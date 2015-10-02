@@ -26,6 +26,8 @@ import email.generator
 import email.encoders
 import email.mime.multipart
 
+from qutebrowser.browser.pageloader import writer
+
 
 _File = collections.namedtuple('_File',
                                ['content', 'content_type', 'content_location',
@@ -42,46 +44,25 @@ E_QUOPRI = email.encoders.encode_quopri
 """Encode the file using MIME quoted-printable encoding."""
 
 
-class MHTMLWriter():
+class MHTMLWriter(writer.PageWriter):
 
     """A class for outputting multiple files to a MHTML document.
 
     Attributes:
-        root_content: The root content as bytes.
-        content_location: The url of the page as str.
-        content_type: The MIME-type of the root content as str.
+        (see writer.PageWriter)
         _files: Mapping of location->_File struct.
     """
 
     suggested_ext = '.mht'
 
     def __init__(self, root_content, content_location, content_type, dest):
-        self.root_content = root_content
-        self.content_location = content_location
-        self.content_type = content_type
-        self.dest = dest
-
+        super().__init__(root_content, content_location, content_type, dest)
         self._files = {}
-
-    def rewrite_url(self, url, base=None):
-        """Rewrite a URL to point at the (future) resource location.
-
-        Args:
-            url: The url to rewrite as QUrl.
-            base: The URL of the file that references url (needed for CSS).
-
-        Returns the modified URL.
-        """
-        return url
 
     def add_file(self, location, content, content_type=None):
         """Add a file to the given MHTML collection.
 
-        Args:
-            location: The original location (URL) of the file.
-            content: The binary content of the file.
-            content_type: The MIME-type of the content (if available)
-            transfer_encoding: The transfer encoding to use for this file.
+        Overwritten PageWriter.add_file.
         """
         transfer_encoding = E_BASE64
         if content_type is not None and content_type.startswith('text/'):
@@ -94,13 +75,15 @@ class MHTMLWriter():
     def remove_file(self, location):
         """Remove a file.
 
-        Args:
-            location: The URL that identifies the file.
+        Overwritten PageWriter.remove_file.
         """
         del self._files[location]
 
     def write(self):
-        """Output the MHTML file."""
+        """Output the MHTML file.
+
+        Overwritten PageWrite.write.
+        """
         msg = email.mime.multipart.MIMEMultipart(
             'related', '---=_qute-{}'.format(uuid.uuid4()))
 
