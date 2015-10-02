@@ -1166,6 +1166,8 @@ class CommandDispatcher:
             dest: The file path to write the download to.
             format: The output format, either 'mhtml' or 'htmldir'.
         """
+        # We want to use the cmdline argument 'format'
+        # pylint: disable=redefined-builtin
         if dest is None:
             suggested_fn = self._current_title() + format.value.suggested_ext
             q = usertypes.Question()
@@ -1175,12 +1177,12 @@ class CommandDispatcher:
             q.default = downloads.path_suggestion(suggested_fn)
             q.answered.connect(
                 functools.partial(page_loader.start_download_checked,
-                                  format=format))
+                                  output_format=format))
             message_bridge = objreg.get("message-bridge", scope="window",
                                         window=self._win_id)
             message_bridge.ask(q, blocking=False)
         else:
-            page_loader.start_download_checked(dest, format=format)
+            page_loader.start_download_checked(dest, output_format=format)
 
     @cmdutils.register(instance='command-dispatcher', scope='window',
                        deprecated="Use :download instead.")

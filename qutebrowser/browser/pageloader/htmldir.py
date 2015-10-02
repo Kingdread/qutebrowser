@@ -27,10 +27,10 @@ from PyQt5.QtCore import QUrl
 
 
 def _inc_filename(filename):
-    """Takes a filename and increases its number."""
+    """Take a filename and increases its number."""
     num = 1
     name, ext = os.path.splitext(filename)
-    match = re.search('-(\d+)$', name)
+    match = re.search(r'-(\d+)$', name)
     if match:
         num = int(match.group(1)) + 1
         name = name[match.start(1):]

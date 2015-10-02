@@ -48,9 +48,11 @@ _CSS_URL_PATTERNS = [re.compile(x) for x in [
 
 
 def _get_css_imports_regex(data, callback=None):
+    """Fallback method for _get_css_imports when cssutils is unavailable."""
     urls = []
 
     def cb_wrapper(match):
+        """Wrap the URL replace callback for use in re.sub."""
         url = match.group('url')
         whole = match.group(0)
         urls.append(url)
@@ -86,6 +88,7 @@ def _handle_css_declaration(declaration, callback):
 
 
 def _get_css_imports_cssutils(data, inline=False, callback=None):
+    """See _get_css_imports. Only used when cssutils is installed."""
     # We don't care about invalid CSS data, this will only litter the log
     # output with CSS errors
     parser = cssutils.CSSParser(loglevel=100,
@@ -113,7 +116,10 @@ def _get_css_imports_cssutils(data, inline=False, callback=None):
 def _get_css_imports(data, inline=False, callback=None):
     """Return all assets that are referenced in the given CSS document.
 
-    The returned URLs are relative to the stylesheet's URL.
+    The returned URLs are relative to the stylesheet's URL. If callback is
+    given, each url is passed to callback (as QUrl) and the returned QUrl is
+    used instead - i.e. each URL will be replaced by the output of
+    callback(url).
 
     Args:
         data: The content of the stylesheet to scan as string.
@@ -364,11 +370,14 @@ class _NoCloseBytesIO(io.BytesIO):  # pylint: disable=no-init
 
 
 class Format(enum.Enum):
+
+    """The output format which the downloaded page will be saved as."""
+
     mhtml = mhtml.MHTMLWriter
     htmldir = htmldir.HTMLDirWriter
 
 
-def start_download(dest, format):
+def start_download(dest, output_format):
     """Start downloading the current page and all assets to a MHTML file.
 
     This will overwrite dest if it already exists.
@@ -379,11 +388,11 @@ def start_download(dest, format):
     """
     dest = os.path.expanduser(dest)
     web_view = objreg.get('webview', scope='tab', tab='current')
-    loader = _Downloader(web_view, dest, format.value)
+    loader = _Downloader(web_view, dest, output_format.value)
     loader.run()
 
 
-def start_download_checked(dest, format):
+def start_download_checked(dest, output_format):
     """First check if dest is already a file, then start the download.
 
     Args:
@@ -391,13 +400,15 @@ def start_download_checked(dest, format):
         format: The Format to use for the output.
     """
     if not os.path.isfile(dest):
-        start_download(dest, format)
+        start_download(dest, output_format)
         return
 
     q = usertypes.Question()
     q.mode = usertypes.PromptMode.yesno
     q.text = "{} exists. Overwrite?".format(dest)
     q.completed.connect(q.deleteLater)
-    q.answered_yes.connect(functools.partial(start_download, dest, format))
-    message_bridge = objreg.get('message-bridge', scope='window', window='current')
+    q.answered_yes.connect(functools.partial(start_download, dest,
+                                             output_format))
+    message_bridge = objreg.get('message-bridge', scope='window',
+                                window='current')
     message_bridge.ask(q, blocking=False)

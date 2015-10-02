@@ -2,8 +2,9 @@
 import io
 import textwrap
 import re
-
 import pytest
+
+from PyQt5.QtCore import QUrl
 
 from qutebrowser.browser.pageloader import mhtml
 
@@ -17,29 +18,28 @@ class Checker:
     """A helper to check mhtml output.
 
     Attrs:
-        fp: A BytesIO object for passing to MHTMLWriter.write_to.
+        filename: The filename that you should write the output to.
     """
 
-    def __init__(self):
-        self.fp = io.BytesIO()
+    def __init__(self, tmpdir):
+        self.filename = tmpdir.join('test-mhtml-output').strpath
 
     @property
     def value(self):
-        return self.fp.getvalue()
+        with open(self.filename, 'rb') as f:
+            return f.read()
 
     def expect(self, expected):
-        actual = self.value.decode('ascii')
-        # Make sure there are no stray \r or \n
-        assert re.search(r'\r[^\n]', actual) is None
-        assert re.search(r'[^\r]\n', actual) is None
-        actual = actual.replace('\r\n', '\n')
+        with open(self.filename, 'rb') as f:
+            actual = f.read()
+        actual = actual.decode('ascii').replace('\r\n', '\n')
         expected = textwrap.dedent(expected).lstrip('\n')
         assert expected == actual
 
 
 @pytest.fixture
-def checker():
-    return Checker()
+def checker(tmpdir):
+    return Checker(tmpdir)
 
 
 def test_quoted_printable_umlauts(checker):
@@ -47,8 +47,9 @@ def test_quoted_printable_umlauts(checker):
     content = content.encode('iso-8859-1')
     writer = mhtml.MHTMLWriter(root_content=content,
                                content_location='localhost',
-                               content_type='text/plain')
-    writer.write_to(checker.fp)
+                               content_type='text/plain',
+                               dest=checker.filename)
+    writer.write()
     checker.expect("""
         Content-Type: multipart/related; boundary="---=_qute-UUID"
         MIME-Version: 1.0
@@ -75,20 +76,21 @@ def test_refuses_non_ascii_header_value(checker, header, value):
         'content_type': 'text/plain',
     }
     defaults[header] = value
-    writer = mhtml.MHTMLWriter(**defaults)
+    writer = mhtml.MHTMLWriter(dest=checker.filename, **defaults)
     with pytest.raises(UnicodeEncodeError) as excinfo:
-        writer.write_to(checker.fp)
+        writer.write()
     assert "'ascii' codec can't encode" in str(excinfo.value)
 
 
 def test_file_encoded_as_base64(checker):
     content = b'Image file attached'
     writer = mhtml.MHTMLWriter(root_content=content, content_type='text/plain',
-                               content_location='http://example.com')
+                               content_location='http://example.com',
+                               dest=checker.filename)
     writer.add_file(location='http://a.example.com/image.png',
                     content='\U0001F601 image data'.encode('utf-8'),
                     content_type='image/png')
-    writer.write_to(checker.fp)
+    writer.write()
     checker.expect("""
         Content-Type: multipart/related; boundary="---=_qute-UUID"
         MIME-Version: 1.0
@@ -116,10 +118,11 @@ def test_file_encoded_as_base64(checker):
 def test_payload_lines_wrap(checker, content_type):
     payload = b'1234567890' * 10
     writer = mhtml.MHTMLWriter(root_content=b'', content_type='text/plain',
-                               content_location='http://example.com')
+                               content_location='http://example.com',
+                               dest=checker.filename)
     writer.add_file(location='http://example.com/payload', content=payload,
                     content_type=content_type)
-    writer.write_to(checker.fp)
+    writer.write()
     for line in checker.value.split(b'\r\n'):
         assert len(line) < 77
 
@@ -127,12 +130,13 @@ def test_payload_lines_wrap(checker, content_type):
 def test_files_appear_sorted(checker):
     writer = mhtml.MHTMLWriter(root_content=b'root file',
                                content_type='text/plain',
-                               content_location='http://www.example.com/')
+                               content_location='http://www.example.com/',
+                               dest=checker.filename)
     for subdomain in 'ahgbizt':
         writer.add_file(location='http://{}.example.com/'.format(subdomain),
                         content='file {}'.format(subdomain).encode('utf-8'),
                         content_type='text/plain')
-    writer.write_to(checker.fp)
+    writer.write()
     checker.expect("""
         Content-Type: multipart/related; boundary="---=_qute-UUID"
         MIME-Version: 1.0
@@ -200,9 +204,10 @@ def test_files_appear_sorted(checker):
 def test_empty_content_type(checker):
     writer = mhtml.MHTMLWriter(root_content=b'',
                                content_location='http://example.com/',
-                               content_type='text/plain')
+                               content_type='text/plain',
+                               dest=checker.filename)
     writer.add_file('http://example.com/file', b'file content')
-    writer.write_to(checker.fp)
+    writer.write()
     checker.expect("""
         Content-Type: multipart/related; boundary="---=_qute-UUID"
         MIME-Version: 1.0
@@ -228,10 +233,11 @@ def test_empty_content_type(checker):
 def test_removing_file_from_mhtml(checker):
     writer = mhtml.MHTMLWriter(root_content=b'root',
                                content_location='http://example.com/',
-                               content_type='text/plain')
+                               content_type='text/plain',
+                               dest=checker.filename)
     writer.add_file('http://evil.com/', b'file content')
     writer.remove_file('http://evil.com/')
-    writer.write_to(checker.fp)
+    writer.write()
     checker.expect("""
         Content-Type: multipart/related; boundary="---=_qute-UUID"
         MIME-Version: 1.0
@@ -245,3 +251,11 @@ def test_removing_file_from_mhtml(checker):
         root
         -----=_qute-UUID--
         """)
+
+def test_rewrite_url():
+    writer = mhtml.MHTMLWriter(root_content=b'',
+                               content_location='localhost',
+                               content_type='text/plain',
+                               dest='/dev/null')
+    url = QUrl('http://example.com/url?query=yes#anchor')
+    assert writer.rewrite_url(url) == url

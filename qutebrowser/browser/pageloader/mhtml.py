@@ -100,7 +100,7 @@ class MHTMLWriter():
         del self._files[location]
 
     def write(self):
-        """Output the MHTML file. """
+        """Output the MHTML file."""
         msg = email.mime.multipart.MIMEMultipart(
             'related', '---=_qute-{}'.format(uuid.uuid4()))
 
