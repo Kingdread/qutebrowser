@@ -52,11 +52,17 @@ def _get_css_imports_regex(data, callback=None):
 
     def cb_wrapper(match):
         url = match.group('url')
+        whole = match.group(0)
         urls.append(url)
         if callback is not None:
             new_url = callback(QUrl(url)).toString()
-            return 'url(' + new_url + ')'
-        return match.group(0)
+            start, stop = match.span('url')
+            # .span returns the position relative to the whole string, but we
+            # want the position relative to the match start instead.
+            start -= match.start(0)
+            stop -= match.start(0)
+            return whole[:start] + new_url + whole[stop:]
+        return whole
 
     for pattern in _CSS_URL_PATTERNS:
         data = pattern.sub(cb_wrapper, data)
