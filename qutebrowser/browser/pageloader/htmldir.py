@@ -35,11 +35,8 @@ def _inc_filename(filename):
     match = re.search(r'-(\d+)$', name)
     if match:
         num = int(match.group(1)) + 1
-        name = name[match.start(1):]
-    if ext:
-        return '{}-{}.{}'.format(name, num, ext)
-    else:
-        return '{}-{}'.format(name, num)
+        name = name[:match.start(0)]
+    return '{}-{}{}'.format(name, num, ext)
 
 
 def _get_asset_folder_path(dest):
@@ -90,13 +87,14 @@ class HTMLDirWriter(writer.PageWriter):
         else:
             url = QUrl(self.content_location).resolved(url)
         if url in self.file_mapping:
-            return QUrl(self.file_mapping[url])
-        new_filename = url.fileName()
-        if not new_filename:
-            new_filename = 'asset'
-        while new_filename in self.file_mapping.values():
-            new_filename = _inc_filename(new_filename)
-        self.file_mapping[url] = new_filename
+            new_filename = self.file_mapping[url]
+        else:
+            new_filename = url.fileName()
+            if not new_filename:
+                new_filename = 'asset'
+            while new_filename in self.file_mapping.values():
+                new_filename = _inc_filename(new_filename)
+            self.file_mapping[url] = new_filename
         if base is None or base == QUrl(self.content_location):
             return QUrl(os.path.join(self.folder_name, new_filename))
         else:
