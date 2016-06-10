@@ -813,27 +813,11 @@ class DownloadManager(QAbstractListModel):
         if suggested_fn is None:
             suggested_fn = 'qutebrowser-download'
 
-        # We won't need a question if a filename or fileobj is already given
-        if fileobj is None and filename is None:
-            filename, q = ask_for_filename(
-                suggested_fn, self._win_id, parent=self,
-                prompt_download_directory=prompt_download_directory
-            )
-
-        if fileobj is not None or filename is not None:
-            return self.fetch_request(request,
-                                      fileobj=fileobj,
-                                      filename=filename,
-                                      suggested_filename=suggested_fn,
-                                      **kwargs)
-        q.answered.connect(
-            lambda fn: self.fetch_request(request,
-                                          filename=fn,
-                                          suggested_filename=suggested_fn,
-                                          **kwargs))
-        self._postprocess_question(q)
-        q.ask()
-        return None
+        return self.fetch_request(request,
+                                  fileobj=fileobj,
+                                  filename=filename,
+                                  suggested_filename=suggested_fn,
+                                  **kwargs)
 
     def fetch_request(self, request, *, page=None, **kwargs):
         """Download a QNetworkRequest to disk.
