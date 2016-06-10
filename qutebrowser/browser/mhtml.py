@@ -503,20 +503,8 @@ def start_download_checked(dest, web_view):
     title = web_view.title()
     default_name = utils.sanitize_filename(title + '.mht')
 
-    # Remove characters which cannot be expressed in the file system encoding
-    encoding = sys.getfilesystemencoding()
-    default_name = utils.force_encoding(default_name, encoding)
-    dest = utils.force_encoding(dest, encoding)
-
-    dest = os.path.expanduser(dest)
-
-    # See if we already have an absolute path
-    path = downloads.create_full_filename(default_name, dest)
-    if path is None:
-        # We still only have a relative path, prepend download_dir and
-        # try again.
-        path = downloads.create_full_filename(
-            default_name, os.path.join(downloads.download_dir(), dest))
+    path = downloads.create_full_filename(default_name, dest,
+                                          win_id=web_view.win_id)
     downloads.last_used_directory = os.path.dirname(path)
 
     # Avoid downloading files if we can't save the output anyway...

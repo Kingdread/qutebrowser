@@ -89,8 +89,55 @@ def path_suggestion(filename):
         raise ValueError("Invalid suggestion value {}!".format(suggestion))
 
 
-def create_full_filename(basename, filename):
+def create_full_filename(basename, filename, *, win_id=None):
     """Create a full filename based on the given basename and filename.
+
+    Args:
+        basename: The basename to use if filename is a directory.
+        filename: The path to a folder or file where you want to save.
+        win_id: Window ID where error messages should be shown. If not given,
+                the logger will be used instead.
+
+    Return:
+        The full absolute path, or None if filename creation was not possible.
+    """
+    filename = os.path.expanduser(filename)
+    full_filename = _create_full_filename(basename, filename)
+    if full_filename is None:
+        # We only got a filename (without directory) or a relative path
+        # from the user, so we append that to the default directory and
+        # try again.
+        full_filename = _create_full_filename(
+            basename, os.path.join(download_dir(), filename))
+
+    # At this point, we have a misconfigured XDG_DOWNLOAD_DIR, as
+    # download_dir() + filename is still no absolute path.
+    # The config value is checked for "absoluteness", but
+    # ~/.config/user-dirs.dirs may be misconfigured and a non-absolute path
+    # may be set for XDG_DOWNLOAD_DIR
+    if full_filename is None:
+        error = (
+            "XDG_DOWNLOAD_DIR points to a relative path - please check"
+            " your ~/.config/user-dirs.dirs. The download is saved in"
+            " your home directory.",
+        )
+        if win_id is None:
+            log.downloads.error(error)
+        else:
+            message.error(win_id, error)
+        # fall back to $HOME as download_dir
+        full_filename = _create_full_filename(
+            basename, os.path.expanduser(os.path.join('~', filename)))
+    return full_filename
+
+
+def _create_full_filename(basename, filename):
+    """Create a correct filename from the given parts.
+
+    If the filename is a directory, return join(filename, basename). If the
+    filename is a file, return just the filename.
+
+    If the resulting filename is not absolute, return None instead.
 
     Args:
         basename: The basename to use if filename is a directory.
@@ -531,30 +578,9 @@ class DownloadItem(QObject):
             raise ValueError("fileobj was already set! filename: {}, "
                              "existing: {}, fileobj {}".format(
                                  filename, self._filename, self.fileobj))
-        filename = os.path.expanduser(filename)
-        self._filename = create_full_filename(self.basename, filename)
-        if self._filename is None:
-            # We only got a filename (without directory) or a relative path
-            # from the user, so we append that to the default directory and
-            # try again.
-            self._filename = create_full_filename(
-                self.basename, os.path.join(download_dir(), filename))
 
-        # At this point, we have a misconfigured XDG_DOWNLOAD_DIR, as
-        # download_dir() + filename is still no absolute path.
-        # The config value is checked for "absoluteness", but
-        # ~/.config/user-dirs.dirs may be misconfigured and a non-absolute path
-        # may be set for XDG_DOWNLOAD_DIR
-        if self._filename is None:
-            message.error(
-                self._win_id,
-                "XDG_DOWNLOAD_DIR points to a relative path - please check"
-                " your ~/.config/user-dirs.dirs. The download is saved in"
-                " your home directory.",
-            )
-            # fall back to $HOME as download_dir
-            self._filename = create_full_filename(
-                self.basename, os.path.expanduser(os.path.join('~', filename)))
+        self._filename = create_full_filename(self.basename, filename,
+                                              win_id=self._win_id)
 
         self.basename = os.path.basename(self._filename)
         last_used_directory = os.path.dirname(self._filename)
