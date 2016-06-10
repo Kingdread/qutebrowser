@@ -49,8 +49,6 @@ ModelRole = usertypes.enum('ModelRole', ['item'], start=Qt.UserRole,
 
 RetryInfo = collections.namedtuple('RetryInfo', ['request', 'manager'])
 
-DownloadPath = collections.namedtuple('DownloadPath', ['filename', 'question'])
-
 # Remember the last used directory
 last_used_directory = None
 
@@ -117,32 +115,39 @@ def create_full_filename(basename, filename):
     return None
 
 
-def ask_for_filename(suggested_filename, win_id, *, parent=None,
+def ask_for_filename(callback, suggested_filename, win_id, *, parent=None,
                      prompt_download_directory=None):
-    """Prepare a question for a download-path.
+    """Return the filename for a download.
 
-    If a filename can be determined directly, it is returned instead.
+    If the settings are set such that the download directory is used
+    immediately, the callback is called directly. Otherwise a question is asked
+    and the callback is called when the user answered the question.
 
-    Returns a (filename, question)-namedtuple, in which one component is
-    None. filename is a string, question is a usertypes.Question. The
-    question has a special .ask() method that takes no arguments for
-    convenience, as this function does not yet ask the question, it
-    only prepares it.
+    The callback's signature should be
+
+    def callback(filename: str):
+        ...
 
     Args:
+        callback: The callback to call with the right filename.
         suggested_filename: The "default"-name that is pre-entered as path.
         win_id: The window where the question will be asked.
         parent: The parent of the question (a QObject).
         prompt_download_directory: If this is something else than None, it
                                    will overwrite the
                                    storage->prompt-download-directory setting.
+
+    Return:
+        If a question needs to be asked, the question object is returned.
+        Otherwise, None is returned.
     """
     if prompt_download_directory is None:
         prompt_download_directory = config.get('storage',
                                                'prompt-download-directory')
 
     if not prompt_download_directory:
-        return DownloadPath(filename=download_dir(), question=None)
+        callback(download_dir())
+        return None
 
     encoding = sys.getfilesystemencoding()
     suggested_filename = utils.force_encoding(suggested_filename, encoding)
@@ -152,11 +157,12 @@ def ask_for_filename(suggested_filename, win_id, *, parent=None,
     q.mode = usertypes.PromptMode.text
     q.completed.connect(q.deleteLater)
     q.default = path_suggestion(suggested_filename)
+    q.answered.connect(callback)
 
     message_bridge = objreg.get('message-bridge', scope='window',
                                 window=win_id)
-    q.ask = lambda: message_bridge.ask(q, blocking=False)
-    return DownloadPath(filename=None, question=q)
+    message_bridge.ask(q, blocking=False)
+    return q
 
 
 class DownloadItemStats(QObject):
@@ -900,23 +906,16 @@ class DownloadManager(QAbstractListModel):
             return download
 
         # Neither filename nor fileobj were given, prepare a question
-        filename, q = ask_for_filename(
-            suggested_filename, self._win_id, parent=self,
-            prompt_download_directory=prompt_download_directory,
+        q = ask_for_filename(
+            download.set_filename, suggested_filename, self._win_id,
+            parent=self, prompt_download_directory=prompt_download_directory,
         )
 
-        # User doesn't want to be asked, so just use the download_dir
-        if filename is not None:
-            download.set_filename(filename)
-            return download
-
-        # Ask the user for a filename
-        self._postprocess_question(q)
-        q.answered.connect(download.set_filename)
-        q.cancelled.connect(download.cancel)
-        download.cancelled.connect(q.abort)
-        download.error.connect(q.abort)
-        q.ask()
+        if q is not None:
+            self._postprocess_question(q)
+            q.cancelled.connect(download.cancel)
+            download.cancelled.connect(q.abort)
+            download.error.connect(q.abort)
 
         return download
 
