@@ -261,3 +261,12 @@ def qute_pdfjs(_win_id, request):
             "pdfjs resource requested but not found: {}".format(e.path))
         raise QuteSchemeError("Can't find pdfjs resource '{}'".format(e.path),
                               QNetworkReply.ContentNotFoundError)
+
+
+@add_handler('')
+def qute_null(_win_id, _request):
+    """Handler for qute://.
+
+    Return an empty reply.
+    """
+    return b""
