@@ -34,6 +34,16 @@ from qutebrowser.utils import (log, debug, usertypes, jinja, urlutils, message,
                                objreg)
 
 
+requests = {}
+
+
+def find_tab_for(url: QUrl):
+    for tab, tab_url in requests.items():
+        if url == tab_url:
+            return tab
+    return None
+
+
 class WebEngineView(QWebEngineView):
 
     """Custom QWebEngineView subclass with qutebrowser-specific features."""
@@ -299,6 +309,7 @@ class WebEnginePage(QWebEnginePage):
                           "{}".format(url.toDisplayString(),
                                       debug.qenum_key(QWebEnginePage, typ),
                                       is_main_frame))
+        requests[self] = url
         if (typ == QWebEnginePage.NavigationTypeLinkClicked and
                 not url.isValid()):
             msg = urlutils.get_errstring(url, "Invalid link clicked")

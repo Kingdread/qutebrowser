@@ -29,7 +29,8 @@ from PyQt5.QtCore import pyqtSlot, Qt
 from PyQt5.QtWebEngineWidgets import QWebEngineDownloadItem
 # pylint: enable=no-name-in-module,import-error,useless-suppression
 
-from qutebrowser.browser import downloads
+from qutebrowser.browser import downloads, pdfjs
+from qutebrowser.browser.webengine import webview
 from qutebrowser.utils import debug, usertypes, message, log, qtutils
 
 
@@ -176,6 +177,15 @@ class DownloadManager(downloads.AbstractDownloadManager):
     @pyqtSlot(QWebEngineDownloadItem)
     def handle_download(self, qt_item):
         """Start a download coming from a QWebEngineProfile."""
+        if (qt_item.mimeType() in ['application/pdf', 'application/x-pdf']
+              and qt_item.url().scheme() != 'blob'):
+            tab = webview.find_tab_for(qt_item.url())
+            page = pdfjs.generate_pdfjs_page(qt_item.url())
+            tab.setHtml(page, qt_item.url())
+            qt_item.cancel()
+            log.misc.debug("Opening pdf.js for webengine tab {}, url {}"
+                           .format(tab, qt_item.url()))
+            return
         suggested_filename = _get_suggested_filename(qt_item.path())
 
         download = DownloadItem(qt_item)
