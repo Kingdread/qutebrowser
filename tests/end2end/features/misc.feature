@@ -349,21 +349,19 @@ Feature: Various utility commands.
 
     # pdfjs support
 
-    @qtwebengine_skip: pdfjs is not implemented yet
     Scenario: pdfjs is used for pdf files
         Given pdfjs is available
         When I set content -> enable-pdfjs to true
         And I open data/misc/test.pdf
         Then the javascript message "PDF * [*] (PDF.js: *)" should be logged
 
-    @qtwebengine_todo: pdfjs is not implemented yet
     Scenario: pdfjs is not used when disabled
         When I set content -> enable-pdfjs to false
         And I set storage -> prompt-download-directory to false
         And I open data/misc/test.pdf
         Then "Download test.pdf finished" should be logged
 
-    @qtwebengine_skip: pdfjs is not implemented yet @qtwebkit_ng_xfail: https://github.com/annulen/webkit/issues/428
+    @qtwebkit_ng_xfail: https://github.com/annulen/webkit/issues/428
     Scenario: Downloading a pdf via pdf.js button (issue 1214)
         Given pdfjs is available
         # WORKAROUND to prevent the "Painter ended with 2 saved states" warning

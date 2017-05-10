@@ -31,7 +31,8 @@ from PyQt5.QtWebEngineWidgets import QWebEngineDownloadItem
 
 from qutebrowser.browser import downloads, pdfjs
 from qutebrowser.browser.webengine import webview
-from qutebrowser.utils import debug, usertypes, message, log, qtutils
+from qutebrowser.config import config
+from qutebrowser.utils import debug, usertypes, message, log, qtutils, jinja
 
 
 class DownloadItem(downloads.AbstractDownloadItem):
@@ -174,18 +175,28 @@ class DownloadManager(downloads.AbstractDownloadManager):
         profile.downloadRequested.connect(self.handle_download,
                                           Qt.DirectConnection)
 
+    def _show_pdfjs(self, qt_item):
+        """Show pdf.js for the given download item."""
+        page = webview.WebEnginePage.find_page_for(qt_item.url())
+        try:
+            pdfjs_html = pdfjs.generate_pdfjs_page(qt_item.url())
+        except pdfjs.PDFJSNotFound:
+            pdfjs_html = jinja.render('no_pdfjs.html',
+                                      url=qt_item.url().toDisplayString())
+        page.setHtml(pdfjs_html, qt_item.url())
+        qt_item.cancel()
+        log.misc.debug("Opening pdf.js for webengine tab {}, url {}"
+                        .format(page, qt_item.url()))
+
     @pyqtSlot(QWebEngineDownloadItem)
     def handle_download(self, qt_item):
         """Start a download coming from a QWebEngineProfile."""
         if (qt_item.mimeType() in ['application/pdf', 'application/x-pdf']
+              and config.get('content', 'enable-pdfjs')
               and qt_item.url().scheme() != 'blob'):
-            tab = webview.find_tab_for(qt_item.url())
-            page = pdfjs.generate_pdfjs_page(qt_item.url())
-            tab.setHtml(page, qt_item.url())
-            qt_item.cancel()
-            log.misc.debug("Opening pdf.js for webengine tab {}, url {}"
-                           .format(tab, qt_item.url()))
+            self._show_pdfjs(qt_item)
             return
+
         suggested_filename = _get_suggested_filename(qt_item.path())
 
         download = DownloadItem(qt_item)

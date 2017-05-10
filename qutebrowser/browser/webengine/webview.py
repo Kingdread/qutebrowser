@@ -34,16 +34,6 @@ from qutebrowser.utils import (log, debug, usertypes, jinja, urlutils, message,
                                objreg)
 
 
-requests = {}
-
-
-def find_tab_for(url: QUrl):
-    for tab, tab_url in requests.items():
-        if url == tab_url:
-            return tab
-    return None
-
-
 class WebEngineView(QWebEngineView):
 
     """Custom QWebEngineView subclass with qutebrowser-specific features."""
@@ -123,6 +113,7 @@ class WebEnginePage(QWebEnginePage):
     """Custom QWebEnginePage subclass with qutebrowser-specific features.
 
     Attributes:
+        last_requested_url: The last URL that has been requested.
         _is_shutting_down: Whether the page is currently shutting down.
         _theme_color: The theme background color.
 
@@ -136,6 +127,7 @@ class WebEnginePage(QWebEnginePage):
 
     def __init__(self, theme_color, parent=None):
         super().__init__(parent)
+        self.last_requested_url = None
         self._is_shutting_down = False
         self.featurePermissionRequested.connect(
             self._on_feature_permission_requested)
@@ -309,10 +301,28 @@ class WebEnginePage(QWebEnginePage):
                           "{}".format(url.toDisplayString(),
                                       debug.qenum_key(QWebEnginePage, typ),
                                       is_main_frame))
-        requests[self] = url
         if (typ == QWebEnginePage.NavigationTypeLinkClicked and
                 not url.isValid()):
             msg = urlutils.get_errstring(url, "Invalid link clicked")
             message.error(msg)
             return False
+        if is_main_frame:
+            self.last_requested_url = url
         return True
+
+    @staticmethod
+    def find_page_for(url: QUrl):
+        """Find the WebEnginePage that requested the given url.
+
+        This looks at the last_requested_url of each existing page and
+        returns the correct one.
+        """
+        for window in objreg.window_registry.values():
+            tab_registry = window.registry['tab-registry']
+            for tab in tab_registry.values():
+                assert hasattr(tab, '_widget')
+                widget = tab._widget
+                assert isinstance(widget, WebEngineView)
+                if widget.page().last_requested_url == url:
+                    return widget.page()
+        return None
