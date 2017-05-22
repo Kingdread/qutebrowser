@@ -438,6 +438,9 @@ def qute_help(url):
 @add_handler('pdfjs')
 def qute_pdfjs(url):
     """Handler for qute://pdfjs. Return the pdf.js viewer."""
+    if url.path().startswith('/data/'):
+        ident = url.path().split('/', 3)[2]
+        return 'application/pdf', pdfjs.get_file(ident)
     try:
         data = pdfjs.get_pdfjs_res(url.path())
     except pdfjs.PDFJSNotFound as e:
@@ -446,10 +449,10 @@ def qute_pdfjs(url):
         # information, as the failed pdfjs requests are still in the log.
         log.misc.warning(
             "pdfjs resource requested but not found: {}".format(e.path))
-        raise qutescheme.QuteSchemeError("Can't find pdfjs resource "
-                                         "'{}'".format(e.path),
-                                         QNetworkReply.ContentNotFoundError)
+        raise QuteSchemeError("Can't find pdfjs resource "
+                              "'{}'".format(e.path), 404)
     else:
         mimetype, _encoding = mimetypes.guess_type(url.fileName())
-        assert mimetype is not None, url
+        if mimetype is None:
+            mimetype = 'application/octet-stream'
         return mimetype, data

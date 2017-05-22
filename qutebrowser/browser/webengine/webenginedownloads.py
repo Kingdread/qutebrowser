@@ -20,11 +20,12 @@
 """QtWebEngine specific code for downloads."""
 
 import re
+import io
 import os.path
 import urllib
 import functools
 
-from PyQt5.QtCore import pyqtSlot, Qt
+from PyQt5.QtCore import pyqtSlot, Qt, QUrl
 # pylint: disable=no-name-in-module,import-error,useless-suppression
 from PyQt5.QtWebEngineWidgets import QWebEngineDownloadItem
 # pylint: enable=no-name-in-module,import-error,useless-suppression
@@ -177,16 +178,30 @@ class DownloadManager(downloads.AbstractDownloadManager):
 
     def _show_pdfjs(self, qt_item):
         """Show pdf.js for the given download item."""
-        page = webview.WebEnginePage.find_page_for(qt_item.url())
-        try:
-            pdfjs_html = pdfjs.generate_pdfjs_page(qt_item.url())
-        except pdfjs.PDFJSNotFound:
-            pdfjs_html = jinja.render('no_pdfjs.html',
-                                      url=qt_item.url().toDisplayString())
-        page.setHtml(pdfjs_html, qt_item.url())
-        qt_item.cancel()
-        log.misc.debug("Opening pdf.js for webengine tab {}, url {}"
+        tab, page = webview.WebEnginePage.find_page_for(qt_item.url())
+        download = DownloadItem(qt_item)
+        self._init_item(download, auto_remove=True,
+                        suggested_filename="PDF")
+        basename = _get_suggested_filename(qt_item.path())
+        fobj = downloads.temp_download_manager.get_tmpfile('pdf')
+        download._set_tempfile(fobj)
+        cb = lambda: self._pdfjs_download_finished(tab, qt_item.url(), fobj.name, basename)
+        download.finished.connect(cb)
+        if download.successful:
+            log.pdfjs.debug("PDF download already finished, calling callback directly...")
+            cb()
+        else:
+            log.pdfjs.debug("Showing loading page")
+            page.setHtml('<html>Loading</html>', qt_item.url())
+        log.pdfjs.debug("Opening pdf.js for webengine tab {}, url {}"
                         .format(page, qt_item.url()))
+
+    def _pdfjs_download_finished(self, tab, url, tmp_name, basename):
+        with open(tmp_name, 'rb') as f:
+            data = f.read()
+        os.remove(tmp_name)
+        log.pdfjs.debug("QtWebEngine PDF download ({}) done!".format(url))
+        pdfjs.show_pdfjs(tab, url, data, basename)
 
     @pyqtSlot(QWebEngineDownloadItem)
     def handle_download(self, qt_item):

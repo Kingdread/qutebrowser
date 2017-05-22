@@ -324,5 +324,5 @@ class WebEnginePage(QWebEnginePage):
                 widget = tab._widget
                 assert isinstance(widget, WebEngineView)
                 if widget.page().last_requested_url == url:
-                    return widget.page()
+                    return (tab, widget.page())
         return None

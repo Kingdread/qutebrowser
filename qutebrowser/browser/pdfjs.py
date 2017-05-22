@@ -20,10 +20,27 @@
 """pdf.js integration for qutebrowser."""
 
 import os
+import hashlib
+import urllib.parse
 
 from PyQt5.QtCore import QUrl
 
-from qutebrowser.utils import utils, javascript
+from qutebrowser.utils import utils, javascript, usertypes, log
+
+
+_files = {}
+
+
+class FileContainer:
+    __slots__ = ('data', 'count')
+
+    def __init__(self, data):
+        self.data = data
+        self.count = 1
+
+    def __repr__(self):
+        ident = hashlib.sha256(self.data).hexdigest()
+        return utils.get_repr(self, data='{'+ident+'}', count=self.count)
 
 
 class PDFJSNotFound(Exception):
@@ -40,60 +57,36 @@ class PDFJSNotFound(Exception):
         super().__init__(message)
 
 
-def generate_pdfjs_page(url):
-    """Return the html content of a page that displays url with pdfjs.
-
-    Returns a string.
-
-    Args:
-        url: The url of the pdf as QUrl.
-    """
-    viewer = get_pdfjs_res('web/viewer.html').decode('utf-8')
-    script = _generate_pdfjs_script(url)
-    html_page = viewer.replace('</body>',
-                               '</body><script>{}</script>'.format(script))
-    return html_page
+def show_pdfjs(tab, url, data, basename):
+    log.pdfjs.debug("showing {} in {}".format(url, tab))
+    ident = add_file(data)
+    # Append the basename after the hash so that the viewer has a nicer title
+    # (the filename instead of the hash)
+    file_url = 'qute://pdfjs/data/{}/{}'.format(ident, basename)
+    view_url = QUrl('qute://pdfjs/web/viewer.html?file={}&origin={}'.format(
+        urllib.parse.quote_plus(file_url),
+        urllib.parse.quote_plus(url.toString()),
+    ))
+    tab.openurl(view_url)
 
 
-def _generate_pdfjs_script(url):
-    """Generate the script that shows the pdf with pdf.js.
-
-    Args:
-        url: The url of the pdf page as QUrl.
-    """
-    return (
-        'document.addEventListener("DOMContentLoaded", function() {{\n'
-        '  PDFJS.verbosity = PDFJS.VERBOSITY_LEVELS.info;\n'
-        '  (window.PDFView || window.PDFViewerApplication).open("{url}");\n'
-        '}});\n'
-    ).format(url=javascript.string_escape(url.toString(QUrl.FullyEncoded)))
+def add_file(data):
+    ident = hashlib.sha256(data).hexdigest()
+    if ident in _files:
+        _files[ident].count += 1
+    else:
+        _files[ident] = FileContainer(data)
+    log.pdfjs.debug("added file: {}".format(_files[ident]))
+    return ident
 
 
-def fix_urls(asset):
-    """Take an html page and replace each relative URL with an absolute.
-
-    This is specialized for pdf.js files and not a general purpose function.
-
-    Args:
-        asset: js file or html page as string.
-    """
-    new_urls = [
-        ('viewer.css', 'qute://pdfjs/web/viewer.css'),
-        ('compatibility.js', 'qute://pdfjs/web/compatibility.js'),
-        ('locale/locale.properties',
-            'qute://pdfjs/web/locale/locale.properties'),
-        ('l10n.js', 'qute://pdfjs/web/l10n.js'),
-        ('../build/pdf.js', 'qute://pdfjs/build/pdf.js'),
-        ('debugger.js', 'qute://pdfjs/web/debugger.js'),
-        ('viewer.js', 'qute://pdfjs/web/viewer.js'),
-        ('compressed.tracemonkey-pldi-09.pdf', ''),
-        ('./images/', 'qute://pdfjs/web/images/'),
-        ('../build/pdf.worker.js', 'qute://pdfjs/build/pdf.worker.js'),
-        ('../web/cmaps/', 'qute://pdfjs/web/cmaps/'),
-    ]
-    for original, new in new_urls:
-        asset = asset.replace(original, new)
-    return asset
+def get_file(ident):
+    container = _files[ident]
+    container.count -= 1
+    log.pdfjs.debug("retrieved file: {}".format(container))
+    if container.count == 0:
+        del _files[ident]
+    return container.data
 
 
 SYSTEM_PDFJS_PATHS = [
@@ -140,13 +133,7 @@ def get_pdfjs_res_and_path(path):
         except FileNotFoundError:
             raise PDFJSNotFound(path) from None
 
-    try:
-        # Might be script/html or might be binary
-        text_content = content.decode('utf-8')
-    except UnicodeDecodeError:
-        return (content, file_path)
-    text_content = fix_urls(text_content)
-    return (text_content.encode('utf-8'), file_path)
+    return (content, file_path)
 
 
 def get_pdfjs_res(path):
