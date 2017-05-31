@@ -27,11 +27,27 @@ from PyQt5.QtGui import QPalette
 from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEnginePage
 # pylint: enable=no-name-in-module,import-error,useless-suppression
 
-from qutebrowser.browser import shared
+from qutebrowser.browser import shared, pdfjs
 from qutebrowser.browser.webengine import certificateerror
 from qutebrowser.config import config
 from qutebrowser.utils import (log, debug, usertypes, jinja, urlutils, message,
                                objreg)
+
+
+class PdfJsData:
+
+    """Per-page data for pdf.js integration.
+
+    Attributes:
+        last_url: The last requested mainframe URL.
+        download_item: The current PDF download item.
+        active: If pdf.js is currently active in this view.
+    """
+
+    def __init__(self):
+        self.last_url = None
+        self.download_item = None
+        self.active = False
 
 
 class WebEngineView(QWebEngineView):
@@ -127,7 +143,7 @@ class WebEnginePage(QWebEnginePage):
 
     def __init__(self, theme_color, parent=None):
         super().__init__(parent)
-        self.last_requested_url = None
+        self.pdfjs_data = PdfJsData()
         self._is_shutting_down = False
         self.featurePermissionRequested.connect(
             self._on_feature_permission_requested)
@@ -306,8 +322,16 @@ class WebEnginePage(QWebEnginePage):
             msg = urlutils.get_errstring(url, "Invalid link clicked")
             message.error(msg)
             return False
+
         if is_main_frame:
-            self.last_requested_url = url
+            self.pdfjs_data.last_url = url
+        if self.pdfjs_data.download_item is not None:
+            log.pdfjs.debug("Cancelling PDF download for {}".format(self))
+            self.pdfjs_data.download_item.cancel()
+            self.pdfjs_data.download_item = None
+        if not pdfjs.is_pdfjs_viewer(url):
+            self.pdfjs_data.active = False
+
         return True
 
     @staticmethod
@@ -323,6 +347,7 @@ class WebEnginePage(QWebEnginePage):
                 assert hasattr(tab, '_widget')
                 widget = tab._widget
                 assert isinstance(widget, WebEngineView)
-                if widget.page().last_requested_url == url:
+                if (widget.page().pdfjs_data.last_url == url
+                      and not widget.page().pdfjs_data.active):
                     return (tab, widget.page())
         return None

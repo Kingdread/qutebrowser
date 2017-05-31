@@ -57,6 +57,17 @@ class PDFJSNotFound(Exception):
         super().__init__(message)
 
 
+def is_pdfjs_viewer(url: QUrl) -> bool:
+    """Checks whether the given URL belongs to the pdf.js viewer."""
+    return get_pdf_url(url) is not None
+
+
+def get_pdf_url(url: QUrl) -> QUrl:
+    """Extracts the original file url from a pdf.js viewer url."""
+    query = urllib.parse.parse_qs(url.query())
+    return query.get('origin')
+
+
 def show_pdfjs(tab, url, data, basename):
     log.pdfjs.debug("showing {} in {}".format(url, tab))
     ident = add_file(data)

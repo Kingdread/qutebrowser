@@ -180,12 +180,14 @@ class DownloadManager(downloads.AbstractDownloadManager):
         """Show pdf.js for the given download item."""
         tab, page = webview.WebEnginePage.find_page_for(qt_item.url())
         download = DownloadItem(qt_item)
+        page.pdfjs_data.download_item = download
+        page.pdfjs_data.active = True
         self._init_item(download, auto_remove=True,
                         suggested_filename="PDF")
         basename = _get_suggested_filename(qt_item.path())
         fobj = downloads.temp_download_manager.get_tmpfile('pdf')
         download._set_tempfile(fobj)
-        cb = lambda: self._pdfjs_download_finished(tab, qt_item.url(), fobj.name, basename)
+        cb = lambda: self._pdfjs_download_finished(tab, page, qt_item.url(), fobj.name, basename)
         download.finished.connect(cb)
         if download.successful:
             log.pdfjs.debug("PDF download already finished, calling callback directly...")
@@ -196,7 +198,12 @@ class DownloadManager(downloads.AbstractDownloadManager):
         log.pdfjs.debug("Opening pdf.js for webengine tab {}, url {}"
                         .format(page, qt_item.url()))
 
-    def _pdfjs_download_finished(self, tab, url, tmp_name, basename):
+    def _pdfjs_download_finished(self, tab, page, url, tmp_name, basename):
+        item = page.pdfjs_data.download_item
+        page.pdfjs_data.download_item = None
+        if not item.successful:
+            tab.set_html('Download cancelled')
+            return
         with open(tmp_name, 'rb') as f:
             data = f.read()
         os.remove(tmp_name)
