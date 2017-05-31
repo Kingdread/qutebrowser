@@ -68,8 +68,8 @@ def get_pdf_url(url: QUrl) -> QUrl:
     return query.get('origin')
 
 
-def show_pdfjs(tab, url, data, basename):
-    log.pdfjs.debug("showing {} in {}".format(url, tab))
+def show_pdfjs(openurl, url, data, basename):
+    log.pdfjs.debug("showing {}".format(url))
     ident = add_file(data)
     # Append the basename after the hash so that the viewer has a nicer title
     # (the filename instead of the hash)
@@ -78,7 +78,7 @@ def show_pdfjs(tab, url, data, basename):
         urllib.parse.quote_plus(file_url),
         urllib.parse.quote_plus(url.toString()),
     ))
-    tab.openurl(view_url)
+    openurl(view_url)
 
 
 def add_file(data):

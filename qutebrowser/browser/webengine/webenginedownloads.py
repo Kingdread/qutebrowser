@@ -208,7 +208,7 @@ class DownloadManager(downloads.AbstractDownloadManager):
             data = f.read()
         os.remove(tmp_name)
         log.pdfjs.debug("QtWebEngine PDF download ({}) done!".format(url))
-        pdfjs.show_pdfjs(tab, url, data, basename)
+        pdfjs.show_pdfjs(tab.openurl, url, data, basename)
 
     @pyqtSlot(QWebEngineDownloadItem)
     def handle_download(self, qt_item):

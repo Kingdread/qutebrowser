@@ -19,6 +19,7 @@
 
 """The main browser widgets."""
 
+import io
 import html
 import functools
 
@@ -30,7 +31,7 @@ from PyQt5.QtPrintSupport import QPrintDialog
 from PyQt5.QtWebKitWidgets import QWebPage, QWebFrame
 
 from qutebrowser.config import config
-from qutebrowser.browser import pdfjs, shared
+from qutebrowser.browser import pdfjs, shared, downloads
 from qutebrowser.browser.webkit import http
 from qutebrowser.browser.webkit.network import networkmanager
 from qutebrowser.utils import (message, usertypes, log, jinja, qtutils, utils,
@@ -197,14 +198,15 @@ class BrowserPage(QWebPage):
 
     def _show_pdfjs(self, reply):
         """Show the reply with pdfjs."""
-        try:
-            page = pdfjs.generate_pdfjs_page(reply.url())
-        except pdfjs.PDFJSNotFound:
-            page = jinja.render('no_pdfjs.html',
-                                url=reply.url().toDisplayString())
-        self.mainFrame().setContent(page.encode('utf-8'), 'text/html',
+        download_manager = objreg.get('qtnetwork-download-manager',
+                                      scope='window', window=self._win_id)
+        target = downloads.FileObjDownloadTarget(io.BytesIO())
+        item = download_manager.fetch(reply, target=target)
+        item.finished.connect(
+            lambda: pdfjs.show_pdfjs(self.view().load, reply.url(),
+                                     target.fileobj.getvalue(), item.basename))
+        self.mainFrame().setContent(b"Loading", 'text/html',
                                     reply.url())
-        reply.deleteLater()
 
     def shutdown(self):
         """Prepare the web page for being deleted."""
