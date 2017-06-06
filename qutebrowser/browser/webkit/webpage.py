@@ -50,6 +50,8 @@ class BrowserPage(QWebPage):
         _ignore_load_started: Whether to ignore the next loadStarted signal.
         _is_shutting_down: Whether the page is currently shutting down.
         _tabdata: The TabData object of the tab this page is in.
+        _pdfjs_download: The DownloadItem that belongs to the current pdfjs
+                         download.
 
     Signals:
         shutting_down: Emitted when the page is currently shutting down.
@@ -74,6 +76,7 @@ class BrowserPage(QWebPage):
         self.open_target = usertypes.ClickTarget.normal
         self._networkmanager = networkmanager.NetworkManager(
             win_id, tab_id, self)
+        self._pdfjs_download = None
         self.setNetworkAccessManager(self._networkmanager)
         self.setForwardUnsupportedContent(True)
         self.reloading.connect(self._networkmanager.clear_rejected_ssl_errors)
@@ -201,10 +204,17 @@ class BrowserPage(QWebPage):
         download_manager = objreg.get('qtnetwork-download-manager',
                                       scope='window', window=self._win_id)
         target = downloads.FileObjDownloadTarget(io.BytesIO())
-        item = download_manager.fetch(reply, target=target)
-        item.finished.connect(
-            lambda: pdfjs.show_pdfjs(self.view().load, reply.url(),
-                                     target.fileobj.getvalue(), item.basename))
+        item = download_manager.fetch(reply, target=target, auto_remove=True)
+        self._pdfjs_download = item
+
+        def _finished():
+            self._pdfjs_download = None
+            if not item.successful:
+                return
+            pdfjs.show_pdfjs(self.view().load, reply.url(),
+                             target.fileobj.getvalue(), item.basename)
+
+        item.finished.connect(_finished)
         self.mainFrame().setContent(b"Loading", 'text/html',
                                     reply.url())
 
@@ -478,6 +488,13 @@ class BrowserPage(QWebPage):
                               debug.qenum_key(QWebPage, typ),
                               self.open_target,
                               self._tabdata.override_target))
+
+        if (self._pdfjs_download is not None and
+              typ != QWebPage.NavigationTypeOther):
+            log.pdfjs.debug("Cancelling pdfjs download {}"
+                            .format(self._pdfjs_download))
+            self._pdfjs_download.cancel()
+            self._pdfjs_download = None
 
         if self._tabdata.override_target is not None:
             target = self._tabdata.override_target
