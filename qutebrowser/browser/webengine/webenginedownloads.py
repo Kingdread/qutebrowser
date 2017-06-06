@@ -194,7 +194,7 @@ class DownloadManager(downloads.AbstractDownloadManager):
             cb()
         else:
             log.pdfjs.debug("Showing loading page")
-            page.setHtml('<html>Loading</html>', qt_item.url())
+            page.setHtml(jinja.render('pdfjs_loading.html'), qt_item.url())
         log.pdfjs.debug("Opening pdf.js for webengine tab {}, url {}"
                         .format(page, qt_item.url()))
 

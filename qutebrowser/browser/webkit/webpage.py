@@ -207,15 +207,16 @@ class BrowserPage(QWebPage):
         item = download_manager.fetch(reply, target=target, auto_remove=True)
         self._pdfjs_download = item
 
-        def _finished():
+        def finished():
             self._pdfjs_download = None
             if not item.successful:
                 return
             pdfjs.show_pdfjs(self.view().load, reply.url(),
                              target.fileobj.getvalue(), item.basename)
 
-        item.finished.connect(_finished)
-        self.mainFrame().setContent(b"Loading", 'text/html',
+        item.finished.connect(finished)
+        loading_page = jinja.render('pdfjs_loading.html').encode('utf-8')
+        self.mainFrame().setContent(loading_page, 'text/html',
                                     reply.url())
 
     def shutdown(self):
